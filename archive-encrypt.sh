@@ -31,7 +31,21 @@ done
 
 if [ -z "$INPUT_FILE" ]; then
     echo "Usage: $0 <input_file> [-k <gpg_key>]"
+    echo ""
+    echo "Arguments:"
+    echo "  <input_file> Path to file to archive and encrypt"
     echo "  -k, --key    GPG key to use for encryption (default: neanderthal)"
+    echo ""
+    echo "Output format:"
+    echo "  Creates: <filename>_<timestamp>.tar.gz.gpg.hex"
+    echo "  If file > 50KB, creates multiple parts:"
+    echo "    <filename>_<timestamp>.tar.gz.gpg.part_aa.hex"
+    echo "    <filename>_<timestamp>.tar.gz.gpg.part_ab.hex"
+    echo "    ..."
+    echo ""
+    echo "Examples:"
+    echo "  $0 myfile.txt"
+    echo "  $0 /path/to/document.pdf -k mykey"
     exit 1
 fi
 BASENAME=$(basename "$INPUT_FILE")

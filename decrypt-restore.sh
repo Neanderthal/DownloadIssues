@@ -31,16 +31,32 @@ done
 
 if [ -z "$PREFIX" ]; then
     echo "Usage: $0 <prefix> [-k <gpg_key>]"
-    echo "  <prefix>     Prefix of the encrypted files (e.g., myfile_20231215_143022)"
+    echo ""
+    echo "Arguments:"
+    echo "  <prefix>     Prefix or filename of encrypted files. Can be provided in any of these formats:"
+    echo "               - Base prefix: myfile_20231215_143022"
+    echo "               - With .hex: myfile_20231215_143022.hex"
+    echo "               - Full name: myfile_20231215_143022.tar.gz.gpg.hex"
+    echo "               - Part name: myfile_20231215_143022.tar.gz.gpg.part_aa.hex"
     echo "  -k, --key    GPG key to use for decryption (optional, auto-detected by default)"
     echo ""
-    echo "Example: $0 myfile_20231215_143022"
-    echo "Example: $0 myfile_20231215_143022 -k neanderthal"
+    echo "Examples:"
+    echo "  $0 myfile_20231215_143022"
+    echo "  $0 myfile_20231215_143022.hex"
+    echo "  $0 myfile_20231215_143022.tar.gz.gpg.hex -k neanderthal"
     exit 1
 fi
 
+# Strip common suffixes if user provided them
+# Try to extract the base prefix intelligently
+PREFIX="${PREFIX%.hex}"                    # Remove .hex if present
+PREFIX="${PREFIX%.tar.gz.gpg.part_*}"      # Remove part suffix if present
+PREFIX="${PREFIX%.tar.gz.gpg}"             # Remove .tar.gz.gpg if present
+
 # Find all hex files matching the prefix
-HEX_FILES=(${PREFIX}*.hex)
+shopt -s nullglob
+HEX_FILES=("${PREFIX}"*.hex)
+shopt -u nullglob
 
 if [ ${#HEX_FILES[@]} -eq 0 ]; then
     echo "Error: No hex files found with prefix '$PREFIX'"
@@ -58,26 +74,27 @@ done
 
 echo "Step 2: Joining parts if necessary..."
 # Check if there are part files
-PART_FILES=(${PREFIX}*.part_*)
-if [ ${#PART_FILES[@]} -gt 0 ]; then
-    # Filter out .hex files
-    BINARY_PARTS=()
-    for file in "${PART_FILES[@]}"; do
-        if [[ ! "$file" == *.hex ]]; then
-            BINARY_PARTS+=("$file")
-        fi
-    done
+shopt -s nullglob
+PART_FILES=("${PREFIX}"*.part_*)
+shopt -u nullglob
 
-    if [ ${#BINARY_PARTS[@]} -gt 0 ]; then
-        echo "Joining ${#BINARY_PARTS[@]} parts..."
-        ENCRYPTED_FILE="${PREFIX}.tar.gz.gpg"
-        cat $(printf '%s\n' "${BINARY_PARTS[@]}" | sort) > "$ENCRYPTED_FILE"
-
-        # Cleanup parts
-        for part in "${BINARY_PARTS[@]}"; do
-            rm "$part"
-        done
+# Filter out .hex files
+BINARY_PARTS=()
+for file in "${PART_FILES[@]}"; do
+    if [[ ! "$file" == *.hex ]]; then
+        BINARY_PARTS+=("$file")
     fi
+done
+
+if [ ${#BINARY_PARTS[@]} -gt 0 ]; then
+    echo "Joining ${#BINARY_PARTS[@]} parts..."
+    ENCRYPTED_FILE="${PREFIX}.tar.gz.gpg"
+    cat $(printf '%s\n' "${BINARY_PARTS[@]}" | sort) > "$ENCRYPTED_FILE"
+
+    # Cleanup parts
+    for part in "${BINARY_PARTS[@]}"; do
+        rm "$part"
+    done
 else
     ENCRYPTED_FILE="${PREFIX}.tar.gz.gpg"
 fi
