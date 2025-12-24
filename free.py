@@ -59,9 +59,6 @@ EXTENSIONS_TO_REMOVE = [
     ".pem",
     ".xml",
     ".ps1",
-    ".sh",
-    ".md",
-    ".conf",
 ]
 
 # Files to keep (exact matches in any directory)
