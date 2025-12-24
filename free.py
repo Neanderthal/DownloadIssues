@@ -2,7 +2,21 @@
 """
 Script to clean up non-essential files from a directory.
 Removes static files, compiled Python, templates, and other non-core files.
-Keeps only Python source and essential configuration files.
+Keeps only Python source and essential configuration files needed to rebuild
+the development/test environment from scratch.
+
+What gets removed:
+- Static files (HTML, CSS, JS, images, fonts)
+- Compiled Python files (.pyc, .pyo)
+- Documentation files (unless in FILES_TO_KEEP)
+- Specific directories (static, templates, __pycache__)
+- Empty directories after cleanup
+- Write-protected files (permissions changed before deletion)
+
+What gets kept:
+- Python source files (.py)
+- Configuration files (.json, pyproject.toml, requirements.txt, etc.)
+- Essential project files (README.md, .env.example, .gitignore, etc.)
 
 Usage:
     python free.py [directory]              # Dry-run mode (default)
@@ -101,8 +115,12 @@ def should_remove_dir(dir_path: Path) -> bool:
     if dir_name in DIRS_TO_KEEP:
         return False
 
-    # Remove all other directories
-    return True
+    # Remove directories in removal list (static, templates, __pycache__, etc.)
+    if dir_name in DIRS_TO_REMOVE:
+        return True
+
+    # Keep other directories (they may contain Python code)
+    return False
 
 
 def handle_remove_readonly(func, path, exc_info):
@@ -194,6 +212,28 @@ def cleanup_project(target_dir, dry_run=True):
                         f"Would remove directory: {dir_path.relative_to(base_dir)}"
                     )
                     dirs.remove(dir_name)  # Don't descend into would-be-removed dir
+
+    # Remove empty directories
+    if not dry_run:
+        for root, dirs, files in os.walk(base_dir, topdown=False):
+            root_path = Path(root)
+
+            # Skip if in a protected directory
+            if any(keep_dir in root_path.parts for keep_dir in DIRS_TO_KEEP):
+                continue
+
+            # Skip the base directory itself
+            if root_path == base_dir:
+                continue
+
+            # Remove if directory is empty
+            try:
+                if not any(root_path.iterdir()):
+                    root_path.rmdir()
+                    removed_dirs.append(root_path)
+                    print(f"Removed empty directory: {root_path.relative_to(base_dir)}")
+            except Exception:
+                pass  # Directory not empty or other error, skip
 
     # Print summary
     print("\n" + "=" * 80)
