@@ -13,6 +13,7 @@ Usage:
 import os
 import shutil
 import sys
+import stat
 from pathlib import Path
 
 # Directories to completely remove
@@ -100,11 +101,19 @@ def should_remove_dir(dir_path: Path) -> bool:
     if dir_name in DIRS_TO_KEEP:
         return False
 
-    # Remove directories in removal list
-    if dir_name in DIRS_TO_REMOVE:
-        return True
+    # Remove all other directories
+    return True
 
-    return False
+
+def handle_remove_readonly(func, path, exc_info):
+    """
+    Error handler for shutil.rmtree to handle read-only files.
+    Removes the read-only flag and retries the operation.
+    """
+    # Change the file to be writable
+    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    # Retry the operation
+    func(path)
 
 
 def cleanup_project(target_dir, dry_run=True):
@@ -148,6 +157,14 @@ def cleanup_project(target_dir, dry_run=True):
                     try:
                         file_path.unlink()
                         print(f"Removed file: {file_path.relative_to(base_dir)}")
+                    except PermissionError:
+                        # Handle write-protected files
+                        try:
+                            os.chmod(file_path, stat.S_IWRITE | stat.S_IREAD)
+                            file_path.unlink()
+                            print(f"Removed protected file: {file_path.relative_to(base_dir)}")
+                        except Exception as e:
+                            print(f"Error removing {file_path}: {e}")
                     except Exception as e:
                         print(f"Error removing {file_path}: {e}")
                 else:
@@ -165,7 +182,7 @@ def cleanup_project(target_dir, dry_run=True):
                 removed_dirs.append(dir_path)
                 if not dry_run:
                     try:
-                        shutil.rmtree(dir_path)
+                        shutil.rmtree(dir_path, onerror=handle_remove_readonly)
                         print(
                             f"Removed directory: {dir_path.relative_to(base_dir)}"
                         )
