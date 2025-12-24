@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Script to archive, encrypt, split, and hex-encode a file
-# Usage: ./archive-encrypt.sh <input_file> [-k <gpg_key>]
+# Script to archive, encrypt, split, and hex-encode a file or folder
+# Usage: ./archive-encrypt.sh <input_path> [-k <gpg_key>]
 
 set -e
 
@@ -9,7 +9,7 @@ set -e
 GPG_KEY="neanderthal"
 
 # Parse arguments
-INPUT_FILE=""
+INPUT_PATH=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         -k|--key)
@@ -17,11 +17,11 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         *)
-            if [ -z "$INPUT_FILE" ]; then
-                INPUT_FILE="$1"
+            if [ -z "$INPUT_PATH" ]; then
+                INPUT_PATH="$1"
             else
                 echo "Error: Unexpected argument '$1'"
-                echo "Usage: $0 <input_file> [-k <gpg_key>]"
+                echo "Usage: $0 <input_path> [-k <gpg_key>]"
                 exit 1
             fi
             shift
@@ -29,36 +29,37 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ -z "$INPUT_FILE" ]; then
-    echo "Usage: $0 <input_file> [-k <gpg_key>]"
+if [ -z "$INPUT_PATH" ]; then
+    echo "Usage: $0 <input_path> [-k <gpg_key>]"
     echo ""
     echo "Arguments:"
-    echo "  <input_file> Path to file to archive and encrypt"
+    echo "  <input_path> Path to file or folder to archive and encrypt"
     echo "  -k, --key    GPG key to use for encryption (default: neanderthal)"
     echo ""
     echo "Output format:"
-    echo "  Creates: <filename>_<timestamp>.tar.gz.gpg.hex"
+    echo "  Creates: <name>_<timestamp>.tar.gz.gpg.hex"
     echo "  If file > 50KB, creates multiple parts:"
-    echo "    <filename>_<timestamp>.tar.gz.gpg.part_aa.hex"
-    echo "    <filename>_<timestamp>.tar.gz.gpg.part_ab.hex"
+    echo "    <name>_<timestamp>.tar.gz.gpg.part_aa.hex"
+    echo "    <name>_<timestamp>.tar.gz.gpg.part_ab.hex"
     echo "    ..."
     echo ""
     echo "Examples:"
     echo "  $0 myfile.txt"
     echo "  $0 /path/to/document.pdf -k mykey"
+    echo "  $0 /path/to/folder -k mykey"
     exit 1
 fi
-BASENAME=$(basename "$INPUT_FILE")
+BASENAME=$(basename "$INPUT_PATH")
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 OUTPUT_PREFIX="${BASENAME}_${TIMESTAMP}"
 
-if [ ! -f "$INPUT_FILE" ]; then
-    echo "Error: File '$INPUT_FILE' not found"
+if [ ! -e "$INPUT_PATH" ]; then
+    echo "Error: Path '$INPUT_PATH' not found"
     exit 1
 fi
 
 echo "Step 1: Creating tar.gz archive..."
-tar czf "${OUTPUT_PREFIX}.tar.gz" "$INPUT_FILE"
+tar czf "${OUTPUT_PREFIX}.tar.gz" "$INPUT_PATH"
 
 echo "Step 2: Encrypting with GPG (key: $GPG_KEY)..."
 gpg -r "$GPG_KEY" -e "${OUTPUT_PREFIX}.tar.gz"
