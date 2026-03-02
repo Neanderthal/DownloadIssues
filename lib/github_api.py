@@ -216,3 +216,15 @@ def add_issue_labels(repo: str, issue_number: int, labels: List[str],
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     resp.raise_for_status()
     return resp.json()
+
+
+def close_issue(repo: str, issue_number: int,
+                token: Optional[str] = None) -> Dict[str, Any]:
+    """Close an issue (set state to closed)."""
+    headers = get_headers(token)
+    url = f"{GITHUB_API_URL}/repos/{repo}/issues/{issue_number}"
+    payload = {"state": "closed"}
+
+    resp = requests.patch(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()

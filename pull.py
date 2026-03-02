@@ -26,6 +26,7 @@ from lib.github_api import (
     fetch_issue_edit_history,
     get_issue_comments,
     add_issue_labels,
+    close_issue,
 )
 from lib.crypto import clean_hex_data, full_decrypt_pipeline, generate_part_suffix
 from lib.integrity import verify_part_md5s
@@ -178,28 +179,34 @@ def cmd_issue(args):
     issue_output = output_dir / f"{filename}_{timestamp}"
 
     if args.hex_only:
-        # Save hex files without decrypting
         save_hex_chunks(chunks, issue_output, filename, timestamp)
-        return
+    else:
+        try:
+            print(f"\nDecrypting to {issue_output}/...")
+            full_decrypt_pipeline(chunks, str(issue_output))
+            print(f"Extracted to: {issue_output.absolute()}")
 
-    try:
-        print(f"\nDecrypting to {issue_output}/...")
-        full_decrypt_pipeline(chunks, str(issue_output))
-        print(f"Extracted to: {issue_output.absolute()}")
+            # Step 5: Add verified label if verification passed
+            if verified and not args.no_label:
+                try:
+                    add_issue_labels(repo, issue_number, ["verified"])
+                    print("Added 'verified' label to issue")
+                except Exception as e:
+                    print(f"Warning: Could not add label: {e}", file=sys.stderr)
 
-        # Step 5: Add verified label if verification passed
-        if verified and not args.no_label:
-            try:
-                add_issue_labels(repo, issue_number, ["verified"])
-                print("Added 'verified' label to issue")
-            except Exception as e:
-                print(f"Warning: Could not add label: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"\nDecryption failed: {e}", file=sys.stderr)
+            print("Saving hex files for manual decryption...")
+            save_hex_chunks(chunks, output_dir, filename, timestamp)
+            sys.exit(1)
 
-    except Exception as e:
-        print(f"\nDecryption failed: {e}", file=sys.stderr)
-        print("Saving hex files for manual decryption...")
-        save_hex_chunks(chunks, output_dir, filename, timestamp)
-        sys.exit(1)
+    # Step 6: Burn (close issue) after successful pull
+    if getattr(args, 'burn', False):
+        try:
+            close_issue(repo, issue_number)
+            print(f"Burned issue #{issue_number} (closed)")
+        except Exception as e:
+            print(f"Warning: Could not close issue: {e}", file=sys.stderr)
 
 
 def save_hex_chunks(chunks, output_dir, filename, timestamp):
@@ -297,6 +304,8 @@ def main():
                               help="Save hex files without decrypting")
     issue_parser.add_argument("--no-label", action="store_true",
                               help="Don't add 'verified' label after success")
+    issue_parser.add_argument("--burn", action="store_true",
+                              help="Close the issue after successful pull + decrypt")
     issue_parser.set_defaults(func=cmd_issue)
 
     # all
@@ -309,6 +318,8 @@ def main():
                             help="Save hex files without decrypting")
     all_parser.add_argument("--no-label", action="store_true",
                             help="Don't add 'verified' label after success")
+    all_parser.add_argument("--burn", action="store_true",
+                            help="Close issues after successful pull + decrypt")
     all_parser.set_defaults(func=cmd_all)
 
     args = parser.parse_args()
