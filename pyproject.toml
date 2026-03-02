@@ -1,0 +1,22 @@
+[project]
+name = "download-issues"
+version = "0.1.0"
+description = "Download and monitor GitHub issues"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+download-issues = "download_issues:main"
+dt-push = "push:main"
+dt-pull = "pull:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []
