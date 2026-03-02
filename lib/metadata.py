@@ -1,14 +1,10 @@
 """Structured metadata in issue comments for data transfer tracking."""
 
 import json
-import re
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 from lib.config import TITLE_PREFIX
-
-METADATA_START = "<!-- DT-METADATA"
-METADATA_END = "DT-METADATA -->"
 
 
 def generate_issue_title(filename: str, timestamp: str) -> str:
@@ -22,8 +18,8 @@ def generate_metadata_comment(filename: str, timestamp: str,
                               archive_md5: str,
                               total_hex_chars: int = 0) -> str:
     """
-    Generate a metadata comment body to be posted as the first comment.
-    Wrapped in an HTML comment so it's invisible in the GitHub UI.
+    Generate metadata JSON to be posted as the first comment.
+    Plain JSON -- no wrapper needed.
     """
     metadata = {
         "version": 1,
@@ -37,35 +33,60 @@ def generate_metadata_comment(filename: str, timestamp: str,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    json_str = json.dumps(metadata, indent=2)
-    return f"{METADATA_START}\n{json_str}\n{METADATA_END}"
+    return json.dumps(metadata, indent=2)
 
 
 def parse_metadata_comment(comment_body: str) -> Optional[Dict[str, Any]]:
     """
-    Parse metadata from an issue comment.
-    Returns the metadata dict if found, None otherwise.
+    Parse metadata from an issue comment body.
+    Tries plain JSON first, then falls back to DT-METADATA wrapper for
+    backward compatibility.
     """
+    text = comment_body.strip()
+
+    # Try plain JSON (new format: first comment is just JSON)
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict) and "parts" in data:
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Fallback: legacy DT-METADATA HTML comment wrapper
+    import re
     pattern = re.compile(
-        re.escape(METADATA_START) + r'\s*(.*?)\s*' + re.escape(METADATA_END),
+        r'<!--\s*DT-METADATA\s*(.*?)\s*DT-METADATA\s*-->',
         re.DOTALL
     )
-    match = pattern.search(comment_body)
-    if not match:
-        return None
+    match = pattern.search(text)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except (json.JSONDecodeError, ValueError):
+            pass
 
-    try:
-        return json.loads(match.group(1))
-    except (json.JSONDecodeError, ValueError):
-        return None
+    return None
 
 
 def find_metadata_in_comments(comments: List[Dict[str, Any]]
                               ) -> Optional[Dict[str, Any]]:
-    """Search through issue comments for DT-METADATA block."""
-    for comment in comments:
-        body = comment.get("body", "")
-        metadata = parse_metadata_comment(body)
+    """
+    Find metadata in issue comments.
+    Checks the first comment first (expected location), then scans all.
+    """
+    if not comments:
+        return None
+
+    # Check first comment (where push.py puts it)
+    first = parse_metadata_comment(comments[0].get("body", ""))
+    if first:
+        return first
+
+    # Scan remaining comments as fallback
+    for comment in comments[1:]:
+        metadata = parse_metadata_comment(comment.get("body", ""))
         if metadata:
             return metadata
+
     return None
