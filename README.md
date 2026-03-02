@@ -59,6 +59,7 @@ No servers. No S3 buckets. No suspicious traffic. Just GitHub issues doing what 
  [+] GraphQL cursor pagination (handles 50+ edit issues)
  [+] Dry-run mode for offline testing
  [+] Resume support for interrupted transfers
+ [+] --burn: auto-close issue after successful pull (leave no trace)
  [+] Legacy backward compatibility
 ```
 
@@ -95,6 +96,9 @@ python pull.py issue 35 -o ./received/
 
 # just grab the hex (skip decryption)
 python pull.py issue 35 --hex-only
+
+# pull and burn -- close the issue after successful extraction
+python pull.py issue 35 --burn
 ```
 
 ### Server-side (no Python available)
@@ -161,8 +165,8 @@ python push.py <target> [-k KEY] [--repo REPO] [--issue N] [--dry-run] [--delay 
 
 ```
 python pull.py list
-python pull.py issue <N> [-o DIR] [--force] [--hex-only] [--no-label]
-python pull.py all [-o DIR] [--force]
+python pull.py issue <N> [-o DIR] [--force] [--hex-only] [--no-label] [--burn]
+python pull.py all [-o DIR] [--force] [--burn]
 ```
 
 | Flag | Effect |
@@ -170,6 +174,7 @@ python pull.py all [-o DIR] [--force]
 | `--force` | Ignore MD5 failures |
 | `--hex-only` | Save hex, skip decrypt |
 | `--no-label` | Don't tag issue as verified |
+| `--burn` | Close the issue after successful pull |
 
 ## Environment
 
