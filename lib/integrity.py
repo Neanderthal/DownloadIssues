@@ -38,8 +38,21 @@ def verify_part_md5s(chunks: List[str],
     errors = []
 
     if len(chunks) != len(expected):
-        errors.append(
-            f"Part count mismatch: got {len(chunks)}, expected {len(expected)}")
+        got = len(chunks)
+        exp = len(expected)
+        if got < exp:
+            missing = [
+                f"part {e.get('index', i)} ({e.get('suffix', '?')}, "
+                f"{e.get('hex_chars', '?')} chars)"
+                for i, e in enumerate(expected[got:], start=got)
+            ]
+            errors.append(
+                f"Part count mismatch: got {got}, expected {exp}. "
+                f"Missing: {', '.join(missing)}")
+        else:
+            errors.append(
+                f"Part count mismatch: got {got}, expected {exp} "
+                f"({got - exp} extra chunk(s))")
         return False, errors
 
     for i, (chunk, exp) in enumerate(zip(chunks, expected)):
