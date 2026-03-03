@@ -91,9 +91,9 @@ def extract_chunks_from_issue(repo, issue_number, verbose=True):
     if verbose:
         print(f"  Found {len(edits)} edit(s), body: {len(current_body or '')} chars")
 
-    # edits are returned newest-first by GitHub; reverse to get oldest-first.
-    # The newest edit (edits[0]) contains the current version of the body,
-    # so we only append the body separately when there are no edits.
+    # Edits are returned newest-first by GitHub; reverse to oldest-first.
+    # For push.py issues: newest edit == current body (duplicate, skip body).
+    # For manual issues: body is the final chunk not in edit history (include it).
     chunks = []
 
     if edits:
@@ -103,6 +103,14 @@ def extract_chunks_from_issue(repo, issue_number, verbose=True):
                 hex_data = clean_hex_data(diff)
                 if hex_data:
                     chunks.append(hex_data)
+
+        # Check if body differs from newest edit -- if so, it's an extra chunk
+        if current_body:
+            newest_diff = edits[0].get("diff", "")
+            body_hex = clean_hex_data(current_body)
+            newest_hex = clean_hex_data(newest_diff) if newest_diff else ""
+            if body_hex and body_hex != newest_hex:
+                chunks.append(body_hex)
     elif current_body:
         # No edits: single-chunk issue, body is the only data
         body_hex = clean_hex_data(current_body)
