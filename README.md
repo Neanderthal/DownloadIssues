@@ -55,12 +55,11 @@ No servers. No S3 buckets. No suspicious traffic. Just GitHub issues doing what 
  [+] GPG encryption with configurable keys
  [+] Exact 62,464 hex char chunking (matches GitHub body limit)
  [+] Per-chunk MD5 + full archive MD5 verification
- [+] Metadata hidden in HTML comments (invisible in GitHub UI)
+ [+] Metadata as JSON in first issue comment
  [+] GraphQL cursor pagination (handles 50+ edit issues)
  [+] Dry-run mode for offline testing
  [+] Resume support for interrupted transfers
  [+] --burn: auto-close issue after successful pull (leave no trace)
- [+] Legacy backward compatibility
 ```
 
 ## Quickstart
@@ -116,10 +115,10 @@ python pull.py issue 35 --burn
 ```
 Issue body:    [last chunk -- what you see on the page]
 Edit history:  [chunk N-1] [chunk N-2] ... [chunk 0]  (newest-first)
-Comment #1:    <!-- DT-METADATA {"parts":[...], "archive_md5":"..."} DT-METADATA -->
+Comment #1:    {"version":1, "parts":[...], "archive_md5":"..."}
 ```
 
-Each edit = exactly **62,464 hex chars** (last chunk may be shorter). Metadata is invisible in the GitHub UI -- wrapped in an HTML comment.
+Each edit = exactly **62,464 hex chars** (last chunk may be shorter). Metadata is plain JSON in the first comment.
 
 Reconstruction: `reversed(edits)` = full hex stream -> `xxd -r -p` -> GPG decrypt -> `tar xzf`
 
@@ -140,9 +139,6 @@ DownloadIssues/
 |
 |-- archive-encrypt-v2.sh      # Server-side: correct chunking + MD5 manifest
 |-- decrypt-restore.sh         # Manual hex -> binary -> gpg -> tar
-|-- archive-encrypt.sh         # Legacy encrypt (50KB binary split)
-|-- download_issues.py         # Legacy issue downloader
-|-- extract_hex_from_edits.py  # Legacy hex extractor
 ```
 
 ## CLI Reference

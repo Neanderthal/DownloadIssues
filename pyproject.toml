@@ -10,7 +10,6 @@ dependencies = [
 ]
 
 [project.scripts]
-download-issues = "download_issues:main"
 dt-push = "push:main"
 dt-pull = "pull:main"
 
