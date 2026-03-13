@@ -13,6 +13,10 @@ dependencies = [
 dt-push = "push:main"
 dt-pull = "pull:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["lib"]
+force-include = {"push.py" = "push.py", "pull.py" = "pull.py"}
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

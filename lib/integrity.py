@@ -28,8 +28,12 @@ def verify_part_md5s(chunks: List[str],
     """
     Verify MD5 of each hex chunk against expected manifest data.
 
+    When chunks are already matched by MD5 (metadata-based extraction),
+    verifies each chunk against its corresponding part. Extra or missing
+    chunks are reported but don't block verification of what we have.
+
     Args:
-        chunks: list of hex strings
+        chunks: list of hex strings (ordered by metadata matching)
         expected: list of dicts with 'index', 'md5', 'hex_chars' keys
 
     Returns:
@@ -37,38 +41,31 @@ def verify_part_md5s(chunks: List[str],
     """
     errors = []
 
-    if len(chunks) != len(expected):
-        got = len(chunks)
-        exp = len(expected)
-        if got < exp:
-            missing = [
-                f"part {e.get('index', i)} ({e.get('suffix', '?')}, "
-                f"{e.get('hex_chars', '?')} chars)"
-                for i, e in enumerate(expected[got:], start=got)
-            ]
-            errors.append(
-                f"Part count mismatch: got {got}, expected {exp}. "
-                f"Missing: {', '.join(missing)}")
-        else:
-            errors.append(
-                f"Part count mismatch: got {got}, expected {exp} "
-                f"({got - exp} extra chunk(s))")
-        return False, errors
-
+    # Verify chunks we have against their corresponding expected parts
     for i, (chunk, exp) in enumerate(zip(chunks, expected)):
         actual_md5 = compute_md5_bytes(chunk.encode('ascii'))
         exp_md5 = exp.get("md5", "")
 
         if actual_md5 != exp_md5:
             errors.append(
-                f"Part {i}: MD5 mismatch (got {actual_md5}, "
-                f"expected {exp_md5})")
+                f"Part {i} ({exp.get('suffix', '?')}): MD5 mismatch "
+                f"(got {actual_md5}, expected {exp_md5})")
 
         exp_chars = exp.get("hex_chars", 0)
         if exp_chars and len(chunk) != exp_chars:
             errors.append(
-                f"Part {i}: size mismatch (got {len(chunk)} chars, "
-                f"expected {exp_chars})")
+                f"Part {i} ({exp.get('suffix', '?')}): size mismatch "
+                f"(got {len(chunk)} chars, expected {exp_chars})")
+
+    # Report count issues
+    if len(chunks) < len(expected):
+        missing = [
+            f"{e.get('suffix', '?')} ({e.get('hex_chars', '?')} chars)"
+            for e in expected[len(chunks):]
+        ]
+        errors.append(
+            f"Missing {len(expected) - len(chunks)} chunk(s): "
+            f"{', '.join(missing)}")
 
     return len(errors) == 0, errors
 

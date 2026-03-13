@@ -22,7 +22,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 from lib.config import (
     GITHUB_REPO, GPG_KEY, TRANSFER_LABEL, HEX_CHARS_PER_CHUNK,

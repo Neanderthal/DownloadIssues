@@ -18,7 +18,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 from lib.config import GITHUB_REPO, TRANSFER_LABEL, TITLE_PREFIX, EXTRACTED_DIR
 from lib.github_api import (
@@ -29,7 +29,6 @@ from lib.github_api import (
     close_issue,
 )
 from lib.crypto import clean_hex_data, full_decrypt_pipeline, generate_part_suffix
-from lib.integrity import verify_part_md5s
 from lib.metadata import find_metadata_in_comments
 
 
@@ -76,12 +75,18 @@ def cmd_list(args):
         print(f"         updated: {updated}  body: {body_len} chars")
 
 
-def extract_chunks_from_issue(repo, issue_number, verbose=True):
+def extract_chunks_from_issue(repo, issue_number, metadata=None, verbose=True):
     """
     Fetch edit history and extract hex chunks from an issue.
-    Data format: reversed(edits) + current_body = full hex data.
 
-    Returns list of hex chunk strings (cleaned).
+    Metadata is the source of truth. When provided, each edit/body is
+    matched by MD5 against the manifest parts list. Chunks are returned
+    in manifest order; duplicates and unrecognised edits are ignored.
+    Missing parts are reported.
+
+    Returns (chunks, verified):
+        chunks   - list of hex strings in correct order
+        verified - True when metadata was used and all parts matched
     """
     if verbose:
         print(f"Fetching edit history for issue #{issue_number}...")
@@ -91,37 +96,71 @@ def extract_chunks_from_issue(repo, issue_number, verbose=True):
     if verbose:
         print(f"  Found {len(edits)} edit(s), body: {len(current_body or '')} chars")
 
-    # Edits are returned newest-first by GitHub; reverse to oldest-first.
-    # For push.py issues: newest edit == current body (duplicate, skip body).
-    # For manual issues: body is the final chunk not in edit history (include it).
-    chunks = []
-
-    if edits:
-        for edit in reversed(edits):
-            diff = edit.get("diff", "")
-            if diff:
-                hex_data = clean_hex_data(diff)
-                if hex_data:
-                    chunks.append(hex_data)
-
-        # Check if body differs from newest edit -- if so, it's an extra chunk
-        if current_body:
-            newest_diff = edits[0].get("diff", "")
-            body_hex = clean_hex_data(current_body)
-            newest_hex = clean_hex_data(newest_diff) if newest_diff else ""
-            if body_hex and body_hex != newest_hex:
-                chunks.append(body_hex)
-    elif current_body:
-        # No edits: single-chunk issue, body is the only data
+    # Collect every hex blob we can find (edits + body)
+    raw_chunks = []
+    for edit in (edits or []):
+        diff = edit.get("diff", "")
+        if diff:
+            hex_data = clean_hex_data(diff)
+            if hex_data:
+                raw_chunks.append(hex_data)
+    if current_body:
         body_hex = clean_hex_data(current_body)
         if body_hex:
-            chunks.append(body_hex)
+            raw_chunks.append(body_hex)
 
-    if verbose:
-        total_chars = sum(len(c) for c in chunks)
-        print(f"  Extracted {len(chunks)} chunk(s), {total_chars} total hex chars")
+    if metadata and "parts" in metadata:
+        from lib.integrity import compute_md5_str
 
-    return chunks
+        # Index raw data by MD5
+        md5_to_chunk = {}
+        for chunk in raw_chunks:
+            md5 = compute_md5_str(chunk)
+            md5_to_chunk.setdefault(md5, chunk)
+
+        # Walk manifest in order — pick matching chunks, skip missing
+        chunks = []
+        missing = []
+        for part in metadata["parts"]:
+            expected_md5 = part.get("md5", "")
+            if expected_md5 in md5_to_chunk:
+                chunks.append(md5_to_chunk[expected_md5])
+            else:
+                missing.append(
+                    f"{part.get('suffix', '?')} "
+                    f"({part.get('hex_chars', '?')} chars)")
+
+        ignored = len(raw_chunks) - len(md5_to_chunk)  # true dupes in raw
+        extra = len(md5_to_chunk) - len(chunks)         # unrecognised edits
+        verified = len(missing) == 0
+
+        if verbose:
+            if ignored:
+                print(f"  Ignored {ignored} duplicate edit(s)")
+            if extra:
+                print(f"  Ignored {extra} unrecognised edit(s)")
+            if missing:
+                print(f"  MISSING chunks: {', '.join(missing)}")
+            status = "all parts found" if verified else f"{len(missing)} part(s) missing"
+            total = sum(len(c) for c in chunks)
+            print(f"  Matched {len(chunks)}/{len(metadata['parts'])} parts "
+                  f"({total} hex chars) — {status}")
+
+        return chunks, verified
+    else:
+        # No metadata — deduplicate, keep first occurrence order
+        seen = set()
+        chunks = []
+        for chunk in raw_chunks:
+            if chunk not in seen:
+                seen.add(chunk)
+                chunks.append(chunk)
+
+        if verbose:
+            total = sum(len(c) for c in chunks)
+            print(f"  Extracted {len(chunks)} chunk(s), {total} total hex chars")
+
+        return chunks, False
 
 
 def cmd_issue(args):
@@ -151,30 +190,20 @@ def cmd_issue(args):
     except Exception as e:
         print(f"Warning: Could not fetch comments: {e}", file=sys.stderr)
 
-    # Step 2: Extract hex chunks
-    chunks = extract_chunks_from_issue(repo, issue_number)
+    # Step 2: Extract + verify chunks (metadata is source of truth)
+    chunks, verified = extract_chunks_from_issue(
+        repo, issue_number, metadata=metadata)
 
     if not chunks:
         print("\nNo hex data found in this issue.", file=sys.stderr)
         sys.exit(1)
 
-    # Step 3: Verify MD5 if metadata available
-    verified = False
-    if metadata and "parts" in metadata:
-        print("\nVerifying MD5 checksums...")
-        ok, errors = verify_part_md5s(chunks, metadata["parts"])
-        if ok:
-            print("  All checksums match!")
-            verified = True
-        else:
-            print("  MD5 verification FAILED:", file=sys.stderr)
-            for err in errors:
-                print(f"    {err}", file=sys.stderr)
-            if not args.force:
-                print("\nUse --force to proceed despite verification failure.",
-                      file=sys.stderr)
-                sys.exit(1)
-            print("  Proceeding anyway (--force)")
+    if metadata and not verified:
+        if not args.force:
+            print("\nUse --force to proceed despite missing chunks.",
+                  file=sys.stderr)
+            sys.exit(1)
+        print("  Proceeding anyway (--force)")
 
     # Step 4: Decrypt or save as legacy
     if metadata:
