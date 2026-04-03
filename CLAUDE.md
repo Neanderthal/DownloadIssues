@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Bidirectional encrypted data tunnel through GitHub Issues.
+Bidirectional encrypted data tunnel through GitHub/GitFlic Issues.
 
 ## Key Commands
 
@@ -8,23 +8,23 @@ Bidirectional encrypted data tunnel through GitHub Issues.
 uv sync                              # install deps
 python pull.py list                  # list data-transfer issues
 python pull.py issue <N> [-o DIR]    # download + verify + decrypt
-python push.py <path> [--dry-run]    # encrypt + push to GitHub issue
-./archive-encrypt-v2.sh <path>       # server-side: encrypt + chunk + manifest
-./decrypt-restore.sh <prefix>        # manual decrypt from .hex files
+python push.py <path> [--dry-run]    # encrypt + push to issue
+uv run server.py                     # start local API server for Chrome extension
 ```
 
 ## Architecture
 
-- `lib/` - shared library: config, github_api, crypto, integrity, metadata
-- `pull.py` / `push.py` - unified local-side pipeline (replaces 5-script manual workflow)
-- `archive-encrypt-v2.sh` - server-side encrypt with correct 62,464-char hex chunking + MD5 manifest
+- `lib/` — shared library: config, crypto, integrity, metadata, provider, github_api, gitflic_api
+- `pull.py` / `push.py` — CLI pipeline (supports both GitHub and GitFlic)
+- `server.py` — FastAPI backend on `127.0.0.1:9741` for Chrome extension (crypto-only endpoints)
+- `extension/` — Chrome Manifest V3 extension (hybrid mode: JS handles API, server handles crypto)
 
 ## Data Format
 
-- Each GitHub issue edit body = exactly 62,464 hex chars (except last chunk)
-- Full data = `reversed(edits)` when edits exist, or `body` alone for single-chunk
-- Metadata stored as plain JSON in first issue comment
-- Pipeline: `tar.gz -> GPG encrypt -> xxd hex -> split at 62,464 chars`
+- Pipeline: `tar.gz → GPG encrypt → xxd hex → split at 62,464 chars`
+- **GitHub**: chunks as issue body edits, metadata in first comment
+- **GitFlic**: metadata in issue body, chunks as comments (no edit history API)
+- Metadata stored as plain JSON with MD5 checksums per chunk
 
 ## Rules
 

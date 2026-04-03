@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Pull data from GitHub Issues: download + verify + decrypt in one step.
+Pull data from a git hosting provider: download + verify + decrypt.
 
-Replaces the manual sequence:
-  download_issues.py -> extract_hex_from_edits.py -> decrypt-restore.sh -> compare_md5.py
+Supports GitHub (edit history) and GitFlic (comments).
 
 Usage:
     python pull.py list                     # show available data-transfer issues
@@ -20,29 +19,29 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from lib.config import GITHUB_REPO, TRANSFER_LABEL, TITLE_PREFIX, EXTRACTED_DIR
-from lib.github_api import (
-    fetch_open_issues,
-    fetch_issue_edit_history,
-    get_issue_comments,
-    add_issue_labels,
-    close_issue,
+from lib.config import (
+    PROVIDER, TRANSFER_LABEL, TITLE_PREFIX, EXTRACTED_DIR,
+    get_repo_for_provider,
 )
-from lib.crypto import clean_hex_data, full_decrypt_pipeline, generate_part_suffix
-from lib.metadata import find_metadata_in_comments
+from lib.provider import get_provider
+from lib.crypto import full_decrypt_pipeline, generate_part_suffix
+from lib.metadata import find_metadata_in_comments, parse_metadata_comment
 
 
 def cmd_list(args):
     """List available data-transfer issues."""
-    repo = args.repo or GITHUB_REPO
+    provider_name = args.provider or PROVIDER
+    provider = get_provider(provider_name)
+    repo = get_repo_for_provider(provider_name, args.repo)
+
     if not repo:
-        print("Error: GITHUB_REPO not configured.", file=sys.stderr)
+        print(f"Error: repo/project not configured for {provider_name}.",
+              file=sys.stderr)
         sys.exit(1)
 
-    print(f"Fetching issues from {repo}...")
+    print(f"Fetching issues from {repo} ({provider_name})...")
 
-    # Fetch all open issues (filter by label if possible, but also check title)
-    issues = fetch_open_issues(repo)
+    issues = provider.fetch_open_issues(repo)
 
     dt_issues = []
     for issue in issues:
@@ -52,7 +51,6 @@ def cmd_list(args):
             dt_issues.append(issue)
 
     if not dt_issues:
-        # Also show all issues as fallback info
         print(f"\nNo issues with '{TITLE_PREFIX}' prefix or "
               f"'{TRANSFER_LABEL}' label found.")
         if issues:
@@ -75,50 +73,30 @@ def cmd_list(args):
         print(f"         updated: {updated}  body: {body_len} chars")
 
 
-def extract_chunks_from_issue(repo, issue_number, metadata=None, verbose=True):
-    """
-    Fetch edit history and extract hex chunks from an issue.
+def extract_chunks_from_issue(provider, repo, issue_number,
+                              metadata=None, verbose=True):
+    """Fetch and extract hex chunks from an issue.
 
-    Metadata is the source of truth. When provided, each edit/body is
-    matched by MD5 against the manifest parts list. Chunks are returned
-    in manifest order; duplicates and unrecognised edits are ignored.
-    Missing parts are reported.
-
-    Returns (chunks, verified):
-        chunks   - list of hex strings in correct order
-        verified - True when metadata was used and all parts matched
+    Works for both providers — provider.fetch_chunks() handles the
+    platform-specific retrieval (edit history vs comments).
     """
     if verbose:
-        print(f"Fetching edit history for issue #{issue_number}...")
+        print(f"Fetching data for issue #{issue_number}...")
 
-    edits, current_body = fetch_issue_edit_history(repo, issue_number)
+    raw_chunks, current_body = provider.fetch_chunks(repo, issue_number)
 
     if verbose:
-        print(f"  Found {len(edits)} edit(s), body: {len(current_body or '')} chars")
-
-    # Collect every hex blob we can find (edits + body)
-    raw_chunks = []
-    for edit in (edits or []):
-        diff = edit.get("diff", "")
-        if diff:
-            hex_data = clean_hex_data(diff)
-            if hex_data:
-                raw_chunks.append(hex_data)
-    if current_body:
-        body_hex = clean_hex_data(current_body)
-        if body_hex:
-            raw_chunks.append(body_hex)
+        print(f"  Found {len(raw_chunks)} raw chunk(s), "
+              f"body: {len(current_body or '')} chars")
 
     if metadata and "parts" in metadata:
         from lib.integrity import compute_md5_str
 
-        # Index raw data by MD5
         md5_to_chunk = {}
         for chunk in raw_chunks:
             md5 = compute_md5_str(chunk)
             md5_to_chunk.setdefault(md5, chunk)
 
-        # Walk manifest in order — pick matching chunks, skip missing
         chunks = []
         missing = []
         for part in metadata["parts"]:
@@ -130,25 +108,25 @@ def extract_chunks_from_issue(repo, issue_number, metadata=None, verbose=True):
                     f"{part.get('suffix', '?')} "
                     f"({part.get('hex_chars', '?')} chars)")
 
-        ignored = len(raw_chunks) - len(md5_to_chunk)  # true dupes in raw
-        extra = len(md5_to_chunk) - len(chunks)         # unrecognised edits
+        ignored = len(raw_chunks) - len(md5_to_chunk)
+        extra = len(md5_to_chunk) - len(chunks)
         verified = len(missing) == 0
 
         if verbose:
             if ignored:
-                print(f"  Ignored {ignored} duplicate edit(s)")
+                print(f"  Ignored {ignored} duplicate(s)")
             if extra:
-                print(f"  Ignored {extra} unrecognised edit(s)")
+                print(f"  Ignored {extra} unrecognised chunk(s)")
             if missing:
                 print(f"  MISSING chunks: {', '.join(missing)}")
-            status = "all parts found" if verified else f"{len(missing)} part(s) missing"
+            status = ("all parts found" if verified
+                      else f"{len(missing)} part(s) missing")
             total = sum(len(c) for c in chunks)
             print(f"  Matched {len(chunks)}/{len(metadata['parts'])} parts "
                   f"({total} hex chars) — {status}")
 
         return chunks, verified
     else:
-        # No metadata — deduplicate, keep first occurrence order
         seen = set()
         chunks = []
         for chunk in raw_chunks:
@@ -163,36 +141,52 @@ def extract_chunks_from_issue(repo, issue_number, metadata=None, verbose=True):
         return chunks, False
 
 
+def _get_metadata(provider, repo, issue_number):
+    """Get metadata — from comments (GitHub) or issue body (GitFlic)."""
+    if provider.chunks_in_comments:
+        # GitFlic: metadata is in the issue body
+        _, body = provider.fetch_chunks(repo, issue_number)
+        if body:
+            return parse_metadata_comment(body)
+        return None
+    else:
+        # GitHub: metadata is in the first comment
+        comments = provider.get_issue_comments(repo, issue_number)
+        return find_metadata_in_comments(comments)
+
+
 def cmd_issue(args):
     """Pull, verify, and decrypt a single issue."""
-    repo = args.repo or GITHUB_REPO
+    provider_name = args.provider or PROVIDER
+    provider = get_provider(provider_name)
+    repo = get_repo_for_provider(provider_name, args.repo)
+
     if not repo:
-        print("Error: GITHUB_REPO not configured.", file=sys.stderr)
+        print(f"Error: repo/project not configured for {provider_name}.",
+              file=sys.stderr)
         sys.exit(1)
 
     issue_number = args.number
-    output_dir = args.output or EXTRACTED_DIR
-    output_dir = Path(output_dir)
+    output_dir = Path(args.output or EXTRACTED_DIR)
 
-    print(f"Pulling issue #{issue_number} from {repo}\n")
+    print(f"Pulling issue #{issue_number} from {repo} ({provider_name})\n")
 
-    # Step 1: Check for metadata in comments
+    # Step 1: Get metadata
     metadata = None
     try:
-        comments = get_issue_comments(repo, issue_number)
-        metadata = find_metadata_in_comments(comments)
+        metadata = _get_metadata(provider, repo, issue_number)
         if metadata:
             print(f"Found metadata: {metadata.get('filename', '?')} "
                   f"({metadata.get('total_parts', '?')} parts, "
                   f"archive MD5: {metadata.get('archive_md5', '?')[:12]}...)")
         else:
-            print("No metadata comment found (legacy issue)")
+            print("No metadata found (legacy issue)")
     except Exception as e:
-        print(f"Warning: Could not fetch comments: {e}", file=sys.stderr)
+        print(f"Warning: Could not fetch metadata: {e}", file=sys.stderr)
 
-    # Step 2: Extract + verify chunks (metadata is source of truth)
+    # Step 2: Extract + verify chunks
     chunks, verified = extract_chunks_from_issue(
-        repo, issue_number, metadata=metadata)
+        provider, repo, issue_number, metadata=metadata)
 
     if not chunks:
         print("\nNo hex data found in this issue.", file=sys.stderr)
@@ -205,10 +199,11 @@ def cmd_issue(args):
             sys.exit(1)
         print("  Proceeding anyway (--force)")
 
-    # Step 4: Decrypt or save as legacy
+    # Step 3: Decrypt
     if metadata:
         filename = metadata.get("filename", f"issue_{issue_number}")
-        timestamp = metadata.get("timestamp", datetime.now().strftime("%Y%m%d_%H%M%S"))
+        timestamp = metadata.get("timestamp",
+                                 datetime.now().strftime("%Y%m%d_%H%M%S"))
     else:
         filename = f"issue_{issue_number:04d}"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -223,13 +218,13 @@ def cmd_issue(args):
             full_decrypt_pipeline(chunks, str(issue_output))
             print(f"Extracted to: {issue_output.absolute()}")
 
-            # Step 5: Add verified label if verification passed
             if verified and not args.no_label:
                 try:
-                    add_issue_labels(repo, issue_number, ["verified"])
+                    provider.add_issue_labels(repo, issue_number, ["verified"])
                     print("Added 'verified' label to issue")
                 except Exception as e:
-                    print(f"Warning: Could not add label: {e}", file=sys.stderr)
+                    print(f"Warning: Could not add label: {e}",
+                          file=sys.stderr)
 
         except Exception as e:
             print(f"\nDecryption failed: {e}", file=sys.stderr)
@@ -237,10 +232,9 @@ def cmd_issue(args):
             save_hex_chunks(chunks, output_dir, filename, timestamp)
             sys.exit(1)
 
-    # Step 6: Burn (close issue) after successful pull
     if getattr(args, 'burn', False):
         try:
-            close_issue(repo, issue_number)
+            provider.close_issue(repo, issue_number)
             print(f"Burned issue #{issue_number} (closed)")
         except Exception as e:
             print(f"Warning: Could not close issue: {e}", file=sys.stderr)
@@ -250,7 +244,6 @@ def save_hex_chunks(chunks, output_dir, filename, timestamp):
     """Save hex chunks to individual files (legacy fallback)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
     prefix = f"{filename}_{timestamp}"
 
     if len(chunks) == 1:
@@ -271,14 +264,18 @@ def save_hex_chunks(chunks, output_dir, filename, timestamp):
 
 def cmd_all(args):
     """Pull all data-transfer issues."""
-    repo = args.repo or GITHUB_REPO
+    provider_name = args.provider or PROVIDER
+    provider = get_provider(provider_name)
+    repo = get_repo_for_provider(provider_name, args.repo)
+
     if not repo:
-        print("Error: GITHUB_REPO not configured.", file=sys.stderr)
+        print(f"Error: repo/project not configured for {provider_name}.",
+              file=sys.stderr)
         sys.exit(1)
 
     output_dir = args.output or EXTRACTED_DIR
 
-    issues = fetch_open_issues(repo)
+    issues = provider.fetch_open_issues(repo)
     dt_issues = [
         i for i in issues
         if i.get("title", "").startswith(TITLE_PREFIX)
@@ -304,7 +301,6 @@ def cmd_all(args):
         print(f"Processing #{number}: {title}")
         print(f"{'='*60}")
 
-        # Reuse cmd_issue logic
         args.number = number
         try:
             cmd_issue(args)
@@ -315,12 +311,16 @@ def cmd_all(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Pull encrypted data from GitHub Issues",
+        description="Pull encrypted data from git hosting issues",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
+        "--provider", type=str, default=None,
+        help=f"Provider: github or gitflic (default: {PROVIDER})",
+    )
+    parser.add_argument(
         "--repo", type=str, default=None,
-        help=f"GitHub repo (default: {GITHUB_REPO or '$GITHUB_REPO'})",
+        help="Override repo/project from env",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -330,8 +330,7 @@ def main():
     list_parser.set_defaults(func=cmd_list)
 
     # issue
-    issue_parser = subparsers.add_parser("issue",
-                                         help="Pull a single issue")
+    issue_parser = subparsers.add_parser("issue", help="Pull a single issue")
     issue_parser.add_argument("number", type=int, help="Issue number")
     issue_parser.add_argument("-o", "--output", type=str, default=None,
                               help="Output directory")
@@ -342,7 +341,7 @@ def main():
     issue_parser.add_argument("--no-label", action="store_true",
                               help="Don't add 'verified' label after success")
     issue_parser.add_argument("--burn", action="store_true",
-                              help="Close the issue after successful pull + decrypt")
+                              help="Close the issue after successful pull")
     issue_parser.set_defaults(func=cmd_issue)
 
     # all
@@ -356,7 +355,7 @@ def main():
     all_parser.add_argument("--no-label", action="store_true",
                             help="Don't add 'verified' label after success")
     all_parser.add_argument("--burn", action="store_true",
-                            help="Close issues after successful pull + decrypt")
+                            help="Close issues after successful pull")
     all_parser.set_defaults(func=cmd_all)
 
     args = parser.parse_args()

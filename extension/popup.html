@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <div class="header">
+      <h1>DT Transfer</h1>
+      <div id="status" class="status offline">offline</div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="push">Push</button>
+      <button class="tab" data-tab="pull">Pull</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </div>
+
+    <!-- Push Tab -->
+    <div id="tab-push" class="tab-content active">
+      <div class="field">
+        <label>Source</label>
+        <div class="browse-row">
+          <span id="push-path-display" class="path-display">No file selected</span>
+          <button id="btn-browse-file" title="Select file">File</button>
+          <button id="btn-browse-folder" title="Select folder">Dir</button>
+        </div>
+        <input type="file" id="file-picker" class="hidden">
+        <input type="file" id="folder-picker" class="hidden" webkitdirectory>
+      </div>
+
+      <div class="field">
+        <label>Provider</label>
+        <select id="push-provider">
+          <option value="gitflic">GitFlic</option>
+          <option value="github">GitHub</option>
+        </select>
+      </div>
+
+      <button id="btn-push" class="primary" disabled>Push</button>
+
+      <div id="push-progress" class="progress-area hidden">
+        <div class="progress-bar"><div class="progress-fill" id="push-fill"></div></div>
+        <div class="progress-text" id="push-text"></div>
+      </div>
+
+      <div id="push-result" class="result hidden"></div>
+    </div>
+
+    <!-- Pull Tab -->
+    <div id="tab-pull" class="tab-content">
+      <div class="field">
+        <label>Issues <button id="btn-refresh" class="small">Refresh</button></label>
+        <div id="issues-list" class="issues-list">
+          <div class="placeholder">Click Refresh to load issues</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Output folder (server-side path, optional)</label>
+        <input type="text" id="pull-path" placeholder="e.g. /home/user/Downloads (default: extracted/)">
+      </div>
+
+      <button id="btn-pull" class="primary" disabled>Pull</button>
+
+      <div id="pull-progress" class="progress-area hidden">
+        <div class="progress-bar"><div class="progress-fill" id="pull-fill"></div></div>
+        <div class="progress-text" id="pull-text"></div>
+      </div>
+
+      <div id="pull-result" class="result hidden"></div>
+    </div>
+  </div>
+
+    <!-- Settings Tab -->
+    <div id="tab-settings" class="tab-content">
+      <div class="field">
+        <label>Mode</label>
+        <select id="settings-mode">
+          <option value="hybrid">Hybrid (JS API + server crypto)</option>
+          <option value="server">Full server (all via SSE)</option>
+        </select>
+      </div>
+
+      <div id="hybrid-settings">
+        <div class="field">
+          <label>GitHub Token</label>
+          <input type="password" id="settings-github-token" placeholder="ghp_...">
+        </div>
+        <div class="field">
+          <label>GitHub Repo</label>
+          <input type="text" id="settings-github-repo" placeholder="owner/repo">
+        </div>
+        <div class="field">
+          <label>GitFlic Token</label>
+          <input type="password" id="settings-gitflic-token" placeholder="UUID token">
+        </div>
+        <div class="field">
+          <label>GitFlic Project</label>
+          <input type="text" id="settings-gitflic-project" placeholder="owner/project">
+        </div>
+      </div>
+
+      <button id="btn-save-settings" class="primary">Save</button>
+      <div id="settings-result" class="result hidden"></div>
+    </div>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
