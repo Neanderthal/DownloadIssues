@@ -345,7 +345,7 @@ async def _pull_stream(req: PullRequest) -> AsyncGenerator[str, None]:
 
         try:
             await asyncio.to_thread(
-                full_decrypt_pipeline, chunks, str(issue_output))
+                full_decrypt_pipeline, chunks, str(issue_output), batch=True)
         except Exception as e:
             yield sse_event({"stage": "error",
                              "message": f"Decryption failed: {e}"})
@@ -548,8 +548,10 @@ async def decrypt(req: DecryptRequest):
 
     try:
         await asyncio.to_thread(
-            full_decrypt_pipeline, req.hex_chunks, str(issue_output))
+            full_decrypt_pipeline, req.hex_chunks, str(issue_output), batch=True)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={"error": f"Decryption failed: {e}"},
