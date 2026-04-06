@@ -65,22 +65,20 @@ def gpg_encrypt(input_path: str, output_path: str,
     )
 
 
-def gpg_decrypt(input_path: str, output_path: str,
-                batch: bool = False) -> None:
-    """Decrypt a GPG-encrypted file.
+def gpg_decrypt(input_path: str, output_path: str) -> None:
+    """Decrypt a GPG-encrypted file via gpg-agent."""
+    env = os.environ.copy()
+    # Ensure gpg-agent can find the terminal for pinentry
+    if "GPG_TTY" not in env:
+        try:
+            env["GPG_TTY"] = os.ttyname(0)
+        except OSError:
+            pass
 
-    When batch=True, uses --batch --pinentry-mode loopback so it works
-    without a terminal (e.g. from the FastAPI server).  Requires
-    ``allow-loopback-pinentry`` in gpg-agent.conf and the passphrase
-    to be cached in gpg-agent beforehand.
-    """
-    cmd = ["gpg", "--yes", "--verbose"]
-    if batch:
-        cmd += ["--batch", "--pinentry-mode", "loopback"]
-    cmd += ["-d", input_path]
+    cmd = ["gpg", "--yes", "--verbose", "-d", input_path]
 
     with open(output_path, 'wb') as out_f:
-        result = subprocess.run(cmd, stdout=out_f, stderr=subprocess.PIPE)
+        result = subprocess.run(cmd, stdout=out_f, stderr=subprocess.PIPE, env=env)
         if result.returncode != 0:
             stderr = result.stderr.decode(errors="replace")
             raise RuntimeError(
@@ -170,8 +168,7 @@ def full_encrypt_pipeline(input_path: str,
 
 
 def full_decrypt_pipeline(hex_chunks: List[str],
-                          output_dir: str,
-                          batch: bool = False) -> str:
+                          output_dir: str) -> str:
     """
     Full decrypt pipeline: join hex -> binary -> gpg decrypt -> tar extract.
 
@@ -184,7 +181,7 @@ def full_decrypt_pipeline(hex_chunks: List[str],
         tar_path = os.path.join(tmpdir, "archive.tar.gz")
 
         hex_to_binary(hex_str, gpg_path)
-        gpg_decrypt(gpg_path, tar_path, batch=batch)
+        gpg_decrypt(gpg_path, tar_path)
         tar_extract(tar_path, output_dir)
 
     return output_dir
